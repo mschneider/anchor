@@ -68,6 +68,14 @@ where
     }
 }
 
+impl<'info, T: Accounts<'info>> ToAccountInfos<'info> for CpiContext<'_, '_, '_, 'info, T> {
+    fn to_account_infos(&self) -> Vec<AccountInfo<'info>> {
+        let mut infos = self.accounts.to_account_infos();
+        infos.push(self.program.clone());
+        infos
+    }
+}
+
 /// Context specifying non-argument inputs for cross-program-invocations
 /// targeted at program state instructions.
 pub struct CpiStateContext<'a, 'b, 'c, 'info, T: Accounts<'info>> {
