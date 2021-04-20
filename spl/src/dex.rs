@@ -1,16 +1,19 @@
 use anchor_lang::solana_program::account_info::AccountInfo;
 use anchor_lang::solana_program::entrypoint::ProgramResult;
-use anchor_lang::solana_program::program_error::ProgramError;
-use anchor_lang::solana_program::sysvar::rent::Rent;
-use anchor_lang::ToAccountInfos;
-use anchor_lang::{Accounts, CpiContext};
-use serum_dex::instruction::SelfTradeBehavior;
-use serum_dex::matching::{OrderType, Side};
+use anchor_lang::solana_program::instruction::AccountMeta;
+use anchor_lang::{Accounts, ToAccountInfos, AccountsExit, ToAccountMetas, CpiContext};
 use solana_program::pubkey::Pubkey;
 use std::num::NonZeroU64;
+use serum_dex::state::MarketState;
+use anchor_lang::solana_program::program_error::ProgramError;
+use std::cell::RefMut;
+use serum_dex::instruction::SelfTradeBehavior;
+use serum_dex::matching::{OrderType, Side};
+
+pub use serum_dex;
 
 lazy_static::lazy_static! {
-    pub static ref ID: Pubkey = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin".parse().unwrap();
+    pub static ref DEX_PROGRAM_ID: Pubkey = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin".parse().unwrap();
 }
 
 pub fn new_order_v3<'info>(
@@ -38,7 +41,7 @@ pub fn new_order_v3<'info>(
         ctx.accounts.token_program.key,
         ctx.accounts.rent.key,
         None, // TODO: referral,
-        &ID,
+        &DEX_PROGRAM_ID,
         side,
         limit_price,
         max_coin_qty,
@@ -60,7 +63,7 @@ pub fn settle_funds<'info>(
     ctx: CpiContext<'_, '_, '_, 'info, SettleFunds<'info>>,
 ) -> ProgramResult {
     let ix = serum_dex::instruction::settle_funds(
-        &ID,
+        &DEX_PROGRAM_ID,
         ctx.accounts.market.key,
         ctx.accounts.token_program.key,
         ctx.accounts.open_orders.key,
@@ -112,4 +115,67 @@ pub struct SettleFunds<'info> {
     pub pc_wallet: AccountInfo<'info>,
     pub vault_signer: AccountInfo<'info>,
     pub token_program: AccountInfo<'info>,
+}
+
+pub struct Market<'info> {
+		acc_info: AccountInfo<'info>,
+}
+
+impl<'info> Market<'info> {
+		fn new(acc_info: AccountInfo<'info>) -> Market<'info> {
+				Self {
+						acc_info
+				}
+		}
+
+		pub fn load_mut(&self) -> Result<RefMut<MarketState>, ProgramError> {
+				MarketState::load(&self.acc_info, &DEX_PROGRAM_ID)
+						.map_err(Into::into)
+		}
+}
+
+impl<'info> anchor_lang::Accounts<'info> for Market<'info> {
+    #[inline(never)]
+    fn try_accounts(
+        _program_id: &Pubkey,
+        accounts: &mut &[AccountInfo<'info>],
+    ) -> Result<Self, ProgramError> {
+        if accounts.is_empty() {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        }
+        let account = &accounts[0];
+        *accounts = &accounts[1..];
+        let l = Market::new(account.clone());
+        if l.acc_info.owner != &*DEX_PROGRAM_ID {
+            return Err(ProgramError::Custom(1)); // todo: proper error
+        }
+        Ok(l)
+    }
+}
+
+impl<'info> ToAccountMetas for Market<'info> {
+    #[inline(never)]
+    fn to_account_metas(&self, is_signer: Option<bool>) -> Vec<AccountMeta> {
+        let is_signer = is_signer.unwrap_or(self.acc_info.is_signer);
+        let meta = match self.acc_info.is_writable {
+            false => AccountMeta::new_readonly(*self.acc_info.key, is_signer),
+            true => AccountMeta::new(*self.acc_info.key, is_signer),
+        };
+        vec![meta]
+    }
+}
+
+impl<'info> ToAccountInfos<'info> for Market<'info> {
+    #[inline(never)]
+    fn to_account_infos(&self) -> Vec<AccountInfo<'info>> {
+        vec![self.acc_info.clone()]
+    }
+}
+
+impl<'info> AccountsExit<'info> for Market<'info> {
+    #[inline(never)]
+    fn exit(&self, _program_id: &Pubkey) -> ProgramResult {
+        // no-op
+        Ok(())
+    }
 }
