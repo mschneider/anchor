@@ -1,0 +1,17 @@
+{
+  "name": "ido-pool",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "main": "app/index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "anchor test"
+  },
+  "dependencies": {
+    "@project-serum/anchor": "^0.4.4",
+    "@project-serum/serum": "^0.13.33",
+    "yargs": "^16.2.0"
+  }
+}
