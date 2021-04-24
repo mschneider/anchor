@@ -138,11 +138,10 @@ async function initPool(
     }
   );
 
-  console.log(`🏦 ido-pool initialized with ${watermelonIdoAmount} tokens`);
-  console.log(`Pool Address: ${poolAccount.publicKey.toBase58()}`);
-  console.log(`Pool Signer: ${poolSigner.toBase58()}`);
+  console.log(`🏦 IDO pool initialized with ${(watermelonIdoAmount.toNumber() / 1000000).toFixed(2)} tokens`);
+  console.log(`Pool Account: ${poolAccount.publicKey.toBase58()}`);
   console.log(`Pool Authority: ${distributionAuthority.toBase58()}`);
-  console.log(`Pool Token: ${redeemableMint.toBase58()}`);
+  console.log(`Redeem Mint: ${redeemableMint.toBase58()}`);
   console.log(`🍉 Account: ${poolWatermelon.toBase58()}`);
   console.log(`💵 Account: ${poolUsdc.toBase58()}`);
 }
