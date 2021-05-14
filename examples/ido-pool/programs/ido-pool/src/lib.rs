@@ -85,8 +85,8 @@ pub mod ido_pool {
         token::mint_to(cpi_ctx, amount)?;
 
         msg!("exchange_usdc_for_redeemable");
-        msg!("unix_timestamp: {}, usdcDeposited: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
-        ctx.accounts.user_authority.key.log();
+        msg!("unixTimestamp: {}, usdcDeposited: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
     }
@@ -130,7 +130,7 @@ pub mod ido_pool {
 
         msg!("exchange_redeemable_for_usdc");
         msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
-        ctx.accounts.user_authority.key.log();
+        msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
     }
@@ -180,7 +180,7 @@ pub mod ido_pool {
 
         msg!("exchange_redeemable_for_watermelon");
         msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
-        ctx.accounts.user_authority.key.log();
+        msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
     }
