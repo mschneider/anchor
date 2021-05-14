@@ -57,6 +57,8 @@ pub mod ido_pool {
             return Err(ErrorCode::LowUsdc.into());
         }
 
+        let new_total = ctx.accounts.user_redeemable.amount.checked_add(amount).unwrap();
+
         // Transfer user's USDC to pool USDC account.
         let cpi_accounts = Transfer {
             from: ctx.accounts.user_usdc.to_account_info(),
@@ -82,6 +84,10 @@ pub mod ido_pool {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
         token::mint_to(cpi_ctx, amount)?;
 
+        msg!("exchange_usdc_for_redeemable");
+        msg!("unix_timestamp: {}, usdcDeposited: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        ctx.accounts.user_authority.key.log();
+
         Ok(())
     }
 
@@ -94,6 +100,8 @@ pub mod ido_pool {
         if ctx.accounts.user_redeemable.amount < amount {
             return Err(ErrorCode::LowRedeemable.into());
         }
+
+        let new_total = ctx.accounts.user_redeemable.amount.checked_sub(amount).unwrap();
 
         // Burn the user's redeemable tokens.
         let cpi_accounts = Burn {
@@ -120,6 +128,10 @@ pub mod ido_pool {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
         token::transfer(cpi_ctx, amount)?;
 
+        msg!("exchange_redeemable_for_usdc");
+        msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        ctx.accounts.user_authority.key.log();
+
         Ok(())
     }
 
@@ -132,6 +144,8 @@ pub mod ido_pool {
         if ctx.accounts.user_redeemable.amount < amount {
             return Err(ErrorCode::LowRedeemable.into());
         }
+
+        let new_total = ctx.accounts.user_redeemable.amount.checked_sub(amount).unwrap();
 
         let watermelon_amount = (amount as u128)
             .checked_mul(ctx.accounts.pool_watermelon.amount as u128)
@@ -163,6 +177,10 @@ pub mod ido_pool {
         let cpi_program = ctx.accounts.token_program.clone();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
         token::transfer(cpi_ctx, watermelon_amount as u64)?;
+
+        msg!("exchange_redeemable_for_watermelon");
+        msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        ctx.accounts.user_authority.key.log();
 
         Ok(())
     }
