@@ -1,7 +1,9 @@
-//! This example demonstrates the use of zero copy deserialization for accounts.
-//! The main noticeable benefit one achieves using zero copy is the ability
-//! to create accounts larger than the size of the stack or heap, as is
-//! demonstrated by the event queue in this example.
+//! This example demonstrates the use of zero-copy deserialization for accounts.
+//! Zero-copy is a deserialization technique that creates data structures by borrowing
+//! (not copying!) from the array holding the input, avoiding the expensive memory
+//! allocation and processing of traditional deserialization.
+//! With zero-copy, we can create accounts larger than the size of the stack or heap,
+//! as is demonstrated by the event queue in this example.
 
 use anchor_lang::prelude::*;
 
@@ -132,7 +134,7 @@ pub struct UpdateFooSecond<'info> {
 
 #[derive(Accounts)]
 pub struct CreateBar<'info> {
-    #[account(associated = authority, with = foo)]
+    #[account(init, associated = authority, with = foo)]
     bar: Loader<'info, Bar>,
     #[account(signer)]
     authority: AccountInfo<'info>,
@@ -143,10 +145,11 @@ pub struct CreateBar<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateBar<'info> {
-    #[account(mut, has_one = authority)]
+    #[account(mut, associated = authority, with = foo, has_one = authority)]
     bar: Loader<'info, Bar>,
     #[account(signer)]
     authority: AccountInfo<'info>,
+    foo: Loader<'info, Foo>,
 }
 
 #[derive(Accounts)]
@@ -174,6 +177,7 @@ pub struct Foo {
 }
 
 #[associated(zero_copy)]
+#[derive(Default)]
 pub struct Bar {
     pub authority: Pubkey,
     pub data: u64,

@@ -85,7 +85,7 @@ describe("ido-pool", () => {
     );
     poolUsdc = await createTokenAccount(provider, usdcMint, poolSigner);
 
-    poolAccount = new anchor.web3.Account();
+    poolAccount = anchor.web3.Keypair.generate();
     const nowBn = new anchor.BN(Date.now() / 1000);
     startIdoTs = nowBn.add(new anchor.BN(5));
     endDepositsTs = nowBn.add(new anchor.BN(10));
@@ -110,6 +110,7 @@ describe("ido-pool", () => {
           poolUsdc,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
         },
         signers: [poolAccount],
         instructions: [

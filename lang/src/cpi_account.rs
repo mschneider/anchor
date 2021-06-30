@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     AccountDeserialize, Accounts, AccountsExit, ToAccountInfo, ToAccountInfos, ToAccountMetas,
 };
@@ -29,6 +30,10 @@ impl<'a, T: AccountDeserialize + Clone> CpiAccount<'a, T> {
         ))
     }
 
+    pub fn try_from_init(info: &AccountInfo<'a>) -> Result<CpiAccount<'a, T>, ProgramError> {
+        Self::try_from(info)
+    }
+
     /// Reloads the account from storage. This is useful, for example, when
     /// observing side effects after CPI.
     pub fn reload(&self) -> Result<CpiAccount<'a, T>, ProgramError> {
@@ -49,9 +54,10 @@ where
     fn try_accounts(
         _program_id: &Pubkey,
         accounts: &mut &[AccountInfo<'info>],
+        _ix_data: &[u8],
     ) -> Result<Self, ProgramError> {
         if accounts.is_empty() {
-            return Err(ProgramError::NotEnoughAccountKeys);
+            return Err(ErrorCode::AccountNotEnoughKeys.into());
         }
         let account = &accounts[0];
         *accounts = &accounts[1..];

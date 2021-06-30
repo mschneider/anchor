@@ -9,7 +9,7 @@ use anchor_spl::token::{self, Burn, Mint, MintTo, TokenAccount, Transfer};
 pub mod ido_pool {
     use super::*;
 
-    #[access_control(InitializePool::accounts(&ctx, nonce))]
+    #[access_control(InitializePool::accounts(&ctx, nonce) future_start_time(&ctx, start_ido_ts))]
     pub fn initialize_pool(
         ctx: Context<InitializePool>,
         num_ido_tokens: u64,
@@ -18,8 +18,8 @@ pub mod ido_pool {
         end_deposits_ts: i64,
         end_ido_ts: i64,
     ) -> Result<()> {
-        if !(start_ido_ts < end_deposits_ts && end_deposits_ts <= end_ido_ts) {
-            return Err(ErrorCode::InitTime.into());
+        if !(start_ido_ts < end_deposits_ts && end_deposits_ts < end_ido_ts) {
+            return Err(ErrorCode::SeqTimes.into());
         }
 
         let pool_account = &mut ctx.accounts.pool_account;
@@ -57,7 +57,12 @@ pub mod ido_pool {
             return Err(ErrorCode::LowUsdc.into());
         }
 
-        let new_total = ctx.accounts.user_redeemable.amount.checked_add(amount).unwrap();
+        let new_total = ctx
+            .accounts
+            .user_redeemable
+            .amount
+            .checked_add(amount)
+            .unwrap();
 
         // Transfer user's USDC to pool USDC account.
         let cpi_accounts = Transfer {
@@ -85,7 +90,12 @@ pub mod ido_pool {
         token::mint_to(cpi_ctx, amount)?;
 
         msg!("exchange_usdc_for_redeemable");
-        msg!("unixTimestamp: {}, usdcDeposited: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        msg!(
+            "unixTimestamp: {}, usdcDeposited: {}, newTotalUsdc: {}",
+            ctx.accounts.clock.unix_timestamp,
+            amount,
+            new_total
+        );
         msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
@@ -101,7 +111,12 @@ pub mod ido_pool {
             return Err(ErrorCode::LowRedeemable.into());
         }
 
-        let new_total = ctx.accounts.user_redeemable.amount.checked_sub(amount).unwrap();
+        let new_total = ctx
+            .accounts
+            .user_redeemable
+            .amount
+            .checked_sub(amount)
+            .unwrap();
 
         // Burn the user's redeemable tokens.
         let cpi_accounts = Burn {
@@ -129,7 +144,12 @@ pub mod ido_pool {
         token::transfer(cpi_ctx, amount)?;
 
         msg!("exchange_redeemable_for_usdc");
-        msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        msg!(
+            "unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}",
+            ctx.accounts.clock.unix_timestamp,
+            amount,
+            new_total
+        );
         msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
@@ -145,8 +165,14 @@ pub mod ido_pool {
             return Err(ErrorCode::LowRedeemable.into());
         }
 
-        let new_total = ctx.accounts.user_redeemable.amount.checked_sub(amount).unwrap();
+        let new_total = ctx
+            .accounts
+            .user_redeemable
+            .amount
+            .checked_sub(amount)
+            .unwrap();
 
+        // Calculate watermelon tokens due.
         let watermelon_amount = (amount as u128)
             .checked_mul(ctx.accounts.pool_watermelon.amount as u128)
             .unwrap()
@@ -179,7 +205,12 @@ pub mod ido_pool {
         token::transfer(cpi_ctx, watermelon_amount as u64)?;
 
         msg!("exchange_redeemable_for_watermelon");
-        msg!("unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}", ctx.accounts.clock.unix_timestamp, amount, new_total);
+        msg!(
+            "unix_timestamp: {}, usdcWithdrawn: {}, newTotalUsdc: {}",
+            ctx.accounts.clock.unix_timestamp,
+            amount,
+            new_total
+        );
         msg!("userPubkey: {}", ctx.accounts.user_authority.key);
 
         Ok(())
@@ -229,6 +260,7 @@ pub struct InitializePool<'info> {
     #[account("token_program.key == &token::ID")]
     pub token_program: AccountInfo<'info>,
     pub rent: Sysvar<'info, Rent>,
+    pub clock: Sysvar<'info, Clock>,
 }
 
 impl<'info> InitializePool<'info> {
@@ -350,8 +382,10 @@ pub struct PoolAccount {
 
 #[error]
 pub enum ErrorCode {
+    #[msg("IDO must start in the future")]
+    IdoFuture,
     #[msg("IDO times are non-sequential")]
-    InitTime,
+    SeqTimes,
     #[msg("IDO has not started")]
     StartIdoTime,
     #[msg("Deposits period has ended")]
@@ -371,6 +405,14 @@ pub enum ErrorCode {
 }
 
 // Access control modifiers.
+
+// Asserts the IDO starts in the future.
+fn future_start_time<'info>(ctx: &Context<InitializePool<'info>>, start_ido_ts: i64) -> Result<()> {
+    if !(ctx.accounts.clock.unix_timestamp < start_ido_ts) {
+        return Err(ErrorCode::IdoFuture.into());
+    }
+    Ok(())
+}
 
 // Asserts the IDO is in the first phase.
 fn unrestricted_phase<'info>(ctx: &Context<ExchangeUsdcForRedeemable<'info>>) -> Result<()> {

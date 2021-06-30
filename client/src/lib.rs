@@ -4,6 +4,8 @@
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program_error::ProgramError;
 use anchor_lang::solana_program::pubkey::Pubkey;
+use anchor_lang::solana_program::system_program;
+use anchor_lang::solana_program::sysvar::rent;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use regex::Regex;
 use solana_client::client_error::ClientError as SolanaClientError;
@@ -87,11 +89,23 @@ impl Program {
 
     /// Returns a request builder.
     pub fn request(&self) -> RequestBuilder {
-        RequestBuilder::new(
+        RequestBuilder::from(
             self.program_id,
-            &self.cfg.cluster.url(),
+            self.cfg.cluster.url(),
             Keypair::from_bytes(&self.cfg.payer.to_bytes()).unwrap(),
             self.cfg.options,
+            RequestNamespace::Global,
+        )
+    }
+
+    /// Returns a request builder for program state.
+    pub fn state_request(&self) -> RequestBuilder {
+        RequestBuilder::from(
+            self.program_id,
+            self.cfg.cluster.url(),
+            Keypair::from_bytes(&self.cfg.payer.to_bytes()).unwrap(),
+            self.cfg.options,
+            RequestNamespace::State { new: false },
         )
     }
 
@@ -109,6 +123,10 @@ impl Program {
         T::try_deserialize(&mut data).map_err(Into::into)
     }
 
+    pub fn state<T: AccountDeserialize>(&self) -> Result<T, ClientError> {
+        self.account(anchor_lang::__private::state::address(&self.program_id))
+    }
+
     pub fn rpc(&self) -> RpcClient {
         RpcClient::new_with_commitment(
             self.cfg.cluster.url().to_string(),
@@ -122,7 +140,7 @@ impl Program {
 
     pub fn on<T: anchor_lang::Event + anchor_lang::AnchorDeserialize>(
         &self,
-        f: impl Fn(&EventContext, T) -> () + Send + 'static,
+        f: impl Fn(&EventContext, T) + Send + 'static,
     ) -> Result<EventHandle, ClientError> {
         let addresses = vec![self.program_id.to_string()];
         let filter = RpcTransactionLogsFilter::Mentions(addresses);
@@ -131,7 +149,7 @@ impl Program {
             commitment: self.cfg.options,
         };
         let self_program_str = self.program_id.to_string();
-        let (client, receiver) = PubsubClient::logs_subscribe(&ws_url, filter.clone(), cfg)?;
+        let (client, receiver) = PubsubClient::logs_subscribe(&ws_url, filter, cfg)?;
         std::thread::spawn(move || {
             loop {
                 match receiver.recv() {
@@ -141,23 +159,24 @@ impl Program {
                             slot: logs.context.slot,
                         };
                         let mut logs = &logs.value.logs[..];
-                        if logs.len() > 0 {
+                        if !logs.is_empty() {
                             if let Ok(mut execution) = Execution::new(&mut logs) {
                                 for l in logs {
                                     // Parse the log.
                                     let (event, new_program, did_pop) = {
                                         if self_program_str == execution.program() {
-                                            handle_program_log(&self_program_str, &l)
-                                                .unwrap_or_else(|e| {
+                                            handle_program_log(&self_program_str, l).unwrap_or_else(
+                                                |e| {
                                                     println!(
                                                         "Unable to parse log: {}",
                                                         e.to_string()
                                                     );
                                                     std::process::exit(1);
-                                                })
+                                                },
+                                            )
                                         } else {
                                             let (program, did_pop) =
-                                                handle_system_log(&self_program_str, &l);
+                                                handle_system_log(&self_program_str, l);
                                             (None, program, did_pop)
                                         }
                                     };
@@ -214,7 +233,7 @@ fn handle_program_log<T: anchor_lang::Event + anchor_lang::AnchorDeserialize>(
     }
     // System log.
     else {
-        let (program, did_pop) = handle_system_log(&self_program_str, &l);
+        let (program, did_pop) = handle_system_log(self_program_str, l);
         Ok((None, program, did_pop))
     }
 }
@@ -246,10 +265,10 @@ impl Execution {
         let re = Regex::new(r"^Program (.*) invoke.*$").unwrap();
         let c = re
             .captures(l)
-            .ok_or(ClientError::LogParseError(l.to_string()))?;
+            .ok_or_else(|| ClientError::LogParseError(l.to_string()))?;
         let program = c
             .get(1)
-            .ok_or(ClientError::LogParseError(l.to_string()))?
+            .ok_or_else(|| ClientError::LogParseError(l.to_string()))?
             .as_str()
             .to_string();
         Ok(Self {
@@ -258,7 +277,7 @@ impl Execution {
     }
 
     pub fn program(&self) -> String {
-        assert!(self.stack.len() > 0);
+        assert!(!self.stack.is_empty());
         self.stack[self.stack.len() - 1].clone()
     }
 
@@ -267,7 +286,7 @@ impl Execution {
     }
 
     pub fn pop(&mut self) {
-        assert!(self.stack.len() > 0);
+        assert!(!self.stack.is_empty());
         self.stack.pop().unwrap();
     }
 }
@@ -304,14 +323,27 @@ pub struct RequestBuilder<'a> {
     // Serialized instruction data for the target RPC.
     instruction_data: Option<Vec<u8>>,
     signers: Vec<&'a dyn Signer>,
+    // True if the user is sending a state instruction.
+    namespace: RequestNamespace,
+}
+
+#[derive(PartialEq)]
+pub enum RequestNamespace {
+    Global,
+    State {
+        // True if the request is to the state's new ctor.
+        new: bool,
+    },
+    Interface,
 }
 
 impl<'a> RequestBuilder<'a> {
-    pub fn new(
+    pub fn from(
         program_id: Pubkey,
         cluster: &str,
         payer: Keypair,
         options: Option<CommitmentConfig>,
+        namespace: RequestNamespace,
     ) -> Self {
         Self {
             program_id,
@@ -322,6 +354,7 @@ impl<'a> RequestBuilder<'a> {
             instructions: Vec::new(),
             instruction_data: None,
             signers: Vec::new(),
+            namespace,
         }
     }
 
@@ -361,18 +394,54 @@ impl<'a> RequestBuilder<'a> {
         self
     }
 
+    /// Invokes the `#[state]`'s `new` constructor.
+    #[allow(clippy::wrong_self_convention)]
+    pub fn new(mut self, args: impl InstructionData) -> Self {
+        assert!(self.namespace == RequestNamespace::State { new: false });
+        self.namespace = RequestNamespace::State { new: true };
+        self.instruction_data = Some(args.data());
+        self
+    }
+
     pub fn signer(mut self, signer: &'a dyn Signer) -> Self {
         self.signers.push(signer);
         self
     }
 
     pub fn send(self) -> Result<Signature, ClientError> {
+        let accounts = match self.namespace {
+            RequestNamespace::State { new } => {
+                let mut accounts = match new {
+                    false => vec![AccountMeta::new(
+                        anchor_lang::__private::state::address(&self.program_id),
+                        false,
+                    )],
+                    true => vec![
+                        AccountMeta::new_readonly(self.payer.pubkey(), true),
+                        AccountMeta::new(
+                            anchor_lang::__private::state::address(&self.program_id),
+                            false,
+                        ),
+                        AccountMeta::new_readonly(
+                            Pubkey::find_program_address(&[], &self.program_id).0,
+                            false,
+                        ),
+                        AccountMeta::new_readonly(system_program::ID, false),
+                        AccountMeta::new_readonly(self.program_id, false),
+                        AccountMeta::new_readonly(rent::ID, false),
+                    ],
+                };
+                accounts.extend_from_slice(&self.accounts);
+                accounts
+            }
+            _ => self.accounts,
+        };
         let mut instructions = self.instructions;
         if let Some(ix_data) = self.instruction_data {
             instructions.push(Instruction {
                 program_id: self.program_id,
                 data: ix_data,
-                accounts: self.accounts,
+                accounts,
             });
         }
 
@@ -416,7 +485,7 @@ mod tests {
         let log = "Program 7Y8VDzehoewALqJfyxZYMgYCnMTCDhWuGfJKUvjYWATw success";
         let (program, did_pop) = handle_system_log("asdf", log);
         assert_eq!(program, None);
-        assert_eq!(did_pop, true);
+        assert!(did_pop);
     }
 
     #[test]
@@ -424,6 +493,6 @@ mod tests {
         let log = "Program 7swsTUiQ6KUK4uFYquQKg4epFRsBnvbrTf2fZQCa2sTJ qwer";
         let (program, did_pop) = handle_system_log("asdf", log);
         assert_eq!(program, None);
-        assert_eq!(did_pop, false);
+        assert!(!did_pop);
     }
 }

@@ -3,6 +3,7 @@ use anchor_lang::solana_program::account_info::AccountInfo;
 use anchor_lang::solana_program::entrypoint::ProgramResult;
 use anchor_lang::solana_program::program_error::ProgramError;
 use anchor_lang::solana_program::program_pack::Pack;
+use anchor_lang::solana_program::pubkey::Pubkey;
 use anchor_lang::{Accounts, CpiContext};
 use std::ops::Deref;
 
@@ -119,6 +120,36 @@ pub fn initialize_account<'a, 'b, 'c, 'info>(
             ctx.accounts.account.clone(),
             ctx.accounts.mint.clone(),
             ctx.accounts.authority.clone(),
+            ctx.accounts.rent.clone(),
+            ctx.program.clone(),
+        ],
+        ctx.signer_seeds,
+    )
+}
+
+pub fn set_authority<'a, 'b, 'c, 'info>(
+    ctx: CpiContext<'a, 'b, 'c, 'info, SetAuthority<'info>>,
+    authority_type: spl_token::instruction::AuthorityType,
+    new_authority: Option<Pubkey>,
+) -> ProgramResult {
+    let mut spl_new_authority: Option<&Pubkey> = None;
+    if new_authority.is_some() {
+        spl_new_authority = new_authority.as_ref()
+    }
+
+    let ix = spl_token::instruction::set_authority(
+        &spl_token::ID,
+        ctx.accounts.account_or_mint.key,
+        spl_new_authority,
+        authority_type,
+        ctx.accounts.current_authority.key,
+        &[], // TODO: Support multisig signers.
+    )?;
+    solana_program::program::invoke_signed(
+        &ix,
+        &[
+            ctx.accounts.account_or_mint.clone(),
+            ctx.accounts.current_authority.clone(),
             ctx.program.clone(),
         ],
         ctx.signer_seeds,
@@ -158,10 +189,21 @@ pub struct InitializeAccount<'info> {
     pub account: AccountInfo<'info>,
     pub mint: AccountInfo<'info>,
     pub authority: AccountInfo<'info>,
+    pub rent: AccountInfo<'info>,
+}
+
+#[derive(Accounts)]
+pub struct SetAuthority<'info> {
+    pub current_authority: AccountInfo<'info>,
+    pub account_or_mint: AccountInfo<'info>,
 }
 
 #[derive(Clone)]
 pub struct TokenAccount(spl_token::state::Account);
+
+impl TokenAccount {
+    pub const LEN: usize = spl_token::state::Account::LEN;
+}
 
 impl anchor_lang::AccountDeserialize for TokenAccount {
     fn try_deserialize(buf: &mut &[u8]) -> Result<Self, ProgramError> {
@@ -199,5 +241,25 @@ impl Deref for Mint {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+// Field parsers to save compute. All account validation is assumed to be done
+// outside of these methods.
+pub mod accessor {
+    use super::*;
+
+    pub fn amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+        let bytes = account.try_borrow_data()?;
+        let mut amount_bytes = [0u8; 8];
+        amount_bytes.copy_from_slice(&bytes[64..72]);
+        Ok(u64::from_le_bytes(amount_bytes))
+    }
+
+    pub fn mint(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
+        let bytes = account.try_borrow_data()?;
+        let mut mint_bytes = [0u8; 32];
+        mint_bytes.copy_from_slice(&bytes[..32]);
+        Ok(Pubkey::new_from_array(mint_bytes))
     }
 }

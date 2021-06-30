@@ -13,5 +13,4 @@ echo "ACC_USDC: $ACC_USDC"
 echo "MINT_MELON: $MINT_MELON"
 echo "ACC_MELON: $ACC_MELON"
 
-node app/index.js init $MINT_USDC $MINT_MELON $ACC_MELON 1000
-
+node app/index.js init $MINT_USDC $MINT_MELON $ACC_MELON 10 --deposit_duration 300 --cancel_duration 60

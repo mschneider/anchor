@@ -1,4 +1,6 @@
+use crate::config::ProgramWorkspace;
 use crate::VERSION;
+use anyhow::Result;
 use heck::{CamelCase, SnakeCase};
 
 pub fn virtual_manifest() -> &'static str {
@@ -100,7 +102,8 @@ module.exports = async function (provider) {
 
 pub fn xargo_toml() -> &'static str {
     r#"[target.bpfel-unknown-unknown.dependencies.std]
-features = []"#
+features = []
+"#
 }
 
 pub fn lib_rs(name: &str) -> String {
@@ -116,7 +119,8 @@ pub mod {} {{
 }}
 
 #[derive(Accounts)]
-pub struct Initialize {{}}"#,
+pub struct Initialize {{}}
+"#,
         name.to_snake_case(),
     )
 }
@@ -180,13 +184,57 @@ pub fn ts_config() -> &'static str {
 }
 
 pub fn git_ignore() -> &'static str {
-    r#"# ignore Mac OS noise
+    r#"
+.anchor
 .DS_Store
-
-# ignore the build directory for Rust/Anchor
 target
-
-# Ignore backup files creates by cargo fmt.
 **/*.rs.bk
-    "#
+"#
+}
+
+pub fn node_shell(
+    cluster_url: &str,
+    wallet_path: &str,
+    programs: Vec<ProgramWorkspace>,
+) -> Result<String> {
+    let mut eval_string = format!(
+        r#"
+const anchor = require('@project-serum/anchor');
+const web3 = anchor.web3;
+const PublicKey = anchor.web3.PublicKey;
+
+const __wallet = new anchor.Wallet(
+  Buffer.from(
+    JSON.parse(
+      require('fs').readFileSync(
+        "{}",
+        {{
+          encoding: "utf-8",
+        }},
+      ),
+    ),
+  ),
+);
+const __connection = new web3.Connection("{}", "processed");
+const provider = new anchor.Provider(__connection, __wallet, {{
+  commitment: "processed",
+  preflightcommitment: "processed",
+}});
+anchor.setProvider(provider);
+"#,
+        wallet_path, cluster_url,
+    );
+
+    for program in programs {
+        eval_string.push_str(&format!(
+            r#"
+anchor.workspace.{} = new anchor.Program({}, new PublicKey("{}"), provider);
+"#,
+            program.name.to_camel_case(),
+            serde_json::to_string(&program.idl)?,
+            program.program_id.to_string()
+        ));
+    }
+
+    Ok(eval_string)
 }

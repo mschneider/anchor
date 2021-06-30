@@ -101,7 +101,7 @@ async function initPool(
   );
   poolSigner = _poolSigner;
 
-  console.log(nonce);
+  console.log(startIdoTs.toString());
 
   // Pool doesn't need a Redeemable SPL token account because it only
   // burns and mints redeemable tokens, it never stores them.
@@ -130,6 +130,7 @@ async function initPool(
         poolUsdc,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
       },
       signers: [poolAccount],
       instructions: [
@@ -149,7 +150,7 @@ async function initPool(
 
 async function bid(poolAccount, userUsdc, bidAmount, userRedeemable) {
 
-  const account = await program.account.poolAccount(poolAccount);
+  const account = await program.account.poolAccount.fetch(poolAccount);
 
   // We use the watermelon mint address as the seed, could use something else though.
   const [_poolSigner, nonce] = await anchor.web3.PublicKey.findProgramAddress(
@@ -229,7 +230,7 @@ const pool_account = {
 
 const start_time = {
   describe: 'the unix time at which the token sale is starting',
-  default: 1 + (Date.now() / 1000),
+  default: 2 + (Date.now() / 1000),
   type: 'number'
 }
 

@@ -21,8 +21,8 @@ impl<'a, 'b, 'c, 'info, T: Accounts<'info>> Context<'a, 'b, 'c, 'info, T> {
         remaining_accounts: &'c [AccountInfo<'info>],
     ) -> Self {
         Self {
-            accounts,
             program_id,
+            accounts,
             remaining_accounts,
         }
     }
@@ -34,6 +34,7 @@ where
     T: ToAccountMetas + ToAccountInfos<'info>,
 {
     pub accounts: T,
+    pub remaining_accounts: Vec<AccountInfo<'info>>,
     pub program: AccountInfo<'info>,
     pub signer_seeds: &'a [&'b [&'c [u8]]],
 }
@@ -46,6 +47,7 @@ where
         Self {
             accounts,
             program,
+            remaining_accounts: Vec::new(),
             signer_seeds: &[],
         }
     }
@@ -59,12 +61,44 @@ where
             accounts,
             program,
             signer_seeds,
+            remaining_accounts: Vec::new(),
         }
     }
 
     pub fn with_signer(mut self, signer_seeds: &'a [&'b [&'c [u8]]]) -> Self {
         self.signer_seeds = signer_seeds;
         self
+    }
+
+    pub fn with_remaining_accounts(mut self, ra: Vec<AccountInfo<'info>>) -> Self {
+        self.remaining_accounts = ra;
+        self
+    }
+}
+
+impl<'info, T: Accounts<'info>> ToAccountInfos<'info> for CpiContext<'_, '_, '_, 'info, T> {
+    fn to_account_infos(&self) -> Vec<AccountInfo<'info>> {
+        let mut infos = self.accounts.to_account_infos();
+        infos.extend_from_slice(&self.remaining_accounts);
+        infos.push(self.program.clone());
+        infos
+    }
+}
+
+impl<'info, T: Accounts<'info>> ToAccountMetas for CpiContext<'_, '_, '_, 'info, T> {
+    fn to_account_metas(&self, is_signer: Option<bool>) -> Vec<AccountMeta> {
+        let mut metas = self.accounts.to_account_metas(is_signer);
+        metas.append(
+            &mut self
+                .remaining_accounts
+                .iter()
+                .map(|acc| match acc.is_writable {
+                    false => AccountMeta::new_readonly(*acc.key, acc.is_signer),
+                    true => AccountMeta::new(*acc.key, acc.is_signer),
+                })
+                .collect(),
+        );
+        metas
     }
 }
 
@@ -83,6 +117,7 @@ impl<'a, 'b, 'c, 'info, T: Accounts<'info>> CpiStateContext<'a, 'b, 'c, 'info, T
                 accounts,
                 program,
                 signer_seeds: &[],
+                remaining_accounts: Vec::new(),
             },
         }
     }
@@ -99,6 +134,7 @@ impl<'a, 'b, 'c, 'info, T: Accounts<'info>> CpiStateContext<'a, 'b, 'c, 'info, T
                 accounts,
                 program,
                 signer_seeds,
+                remaining_accounts: Vec::new(),
             },
         }
     }

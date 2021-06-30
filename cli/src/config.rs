@@ -1,8 +1,12 @@
+use crate::ConfigOverride;
+use anchor_client::Cluster;
 use anchor_syn::idl::Idl;
 use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
-use serum_common::client::Cluster;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
+use std::collections::BTreeMap;
+use std::convert::TryFrom;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
@@ -11,14 +15,42 @@ use std::str::FromStr;
 
 #[derive(Debug, Default)]
 pub struct Config {
-    pub cluster: Cluster,
-    pub wallet: WalletPath,
+    pub provider: ProviderConfig,
+    pub clusters: ClustersConfig,
+    pub scripts: ScriptsConfig,
     pub test: Option<Test>,
 }
 
+#[derive(Debug, Default)]
+pub struct ProviderConfig {
+    pub cluster: Cluster,
+    pub wallet: WalletPath,
+}
+
+pub type ScriptsConfig = BTreeMap<String, String>;
+
+pub type ClustersConfig = BTreeMap<Cluster, BTreeMap<String, ProgramDeployment>>;
+
 impl Config {
+    pub fn discover(
+        cfg_override: &ConfigOverride,
+    ) -> Result<Option<(Self, PathBuf, Option<PathBuf>)>> {
+        Config::_discover().map(|opt| {
+            opt.map(|(mut cfg, cfg_path, cargo_toml)| {
+                if let Some(cluster) = cfg_override.cluster.clone() {
+                    cfg.provider.cluster = cluster;
+                }
+
+                if let Some(wallet) = cfg_override.wallet.clone() {
+                    cfg.provider.wallet = wallet;
+                }
+                (cfg, cfg_path, cargo_toml)
+            })
+        })
+    }
+
     // Searches all parent directories for an Anchor.toml file.
-    pub fn discover() -> Result<Option<(Self, PathBuf, Option<PathBuf>)>> {
+    fn _discover() -> Result<Option<(Self, PathBuf, Option<PathBuf>)>> {
         // Set to true if we ever see a Cargo.toml file when traversing the
         // parent directories.
         let mut cargo_toml = None;
@@ -61,7 +93,7 @@ impl Config {
     }
 
     pub fn wallet_kp(&self) -> Result<Keypair> {
-        solana_sdk::signature::read_keypair_file(&self.wallet.to_string())
+        solana_sdk::signature::read_keypair_file(&self.provider.wallet.to_string())
             .map_err(|_| anyhow!("Unable to read keypair file"))
     }
 }
@@ -70,17 +102,39 @@ impl Config {
 // into base 58 strings.
 #[derive(Debug, Serialize, Deserialize)]
 struct _Config {
+    provider: Provider,
+    test: Option<Test>,
+    scripts: Option<ScriptsConfig>,
+    clusters: Option<BTreeMap<String, BTreeMap<String, serde_json::Value>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Provider {
     cluster: String,
     wallet: String,
-    test: Option<Test>,
 }
 
 impl ToString for Config {
     fn to_string(&self) -> String {
+        let clusters = {
+            let c = ser_clusters(&self.clusters);
+            if c.is_empty() {
+                None
+            } else {
+                Some(c)
+            }
+        };
         let cfg = _Config {
-            cluster: format!("{}", self.cluster),
-            wallet: self.wallet.to_string(),
+            provider: Provider {
+                cluster: format!("{}", self.provider.cluster),
+                wallet: self.provider.wallet.to_string(),
+            },
             test: self.test.clone(),
+            scripts: match self.scripts.is_empty() {
+                true => None,
+                false => Some(self.scripts.clone()),
+            },
+            clusters,
         };
 
         toml::to_string(&cfg).expect("Must be well formed")
@@ -94,11 +148,67 @@ impl FromStr for Config {
         let cfg: _Config = toml::from_str(s)
             .map_err(|e| anyhow::format_err!("Unable to deserialize config: {}", e.to_string()))?;
         Ok(Config {
-            cluster: cfg.cluster.parse()?,
-            wallet: shellexpand::tilde(&cfg.wallet).parse()?,
+            provider: ProviderConfig {
+                cluster: cfg.provider.cluster.parse()?,
+                wallet: shellexpand::tilde(&cfg.provider.wallet).parse()?,
+            },
+            scripts: cfg.scripts.unwrap_or_else(BTreeMap::new),
             test: cfg.test,
+            clusters: cfg.clusters.map_or(Ok(BTreeMap::new()), deser_clusters)?,
         })
     }
+}
+
+fn ser_clusters(
+    clusters: &BTreeMap<Cluster, BTreeMap<String, ProgramDeployment>>,
+) -> BTreeMap<String, BTreeMap<String, serde_json::Value>> {
+    clusters
+        .iter()
+        .map(|(cluster, programs)| {
+            let cluster = cluster.to_string();
+            let programs = programs
+                .iter()
+                .map(|(name, deployment)| {
+                    (
+                        name.clone(),
+                        serde_json::to_value(&_ProgramDeployment::from(deployment)).unwrap(),
+                    )
+                })
+                .collect::<BTreeMap<String, serde_json::Value>>();
+            (cluster, programs)
+        })
+        .collect::<BTreeMap<String, BTreeMap<String, serde_json::Value>>>()
+}
+
+fn deser_clusters(
+    clusters: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+) -> Result<BTreeMap<Cluster, BTreeMap<String, ProgramDeployment>>> {
+    clusters
+        .iter()
+        .map(|(cluster, programs)| {
+            let cluster: Cluster = cluster.parse()?;
+            let programs = programs
+                .iter()
+                .map(|(name, program_id)| {
+                    Ok((
+                        name.clone(),
+                        ProgramDeployment::try_from(match &program_id {
+                            serde_json::Value::String(address) => _ProgramDeployment {
+                                address: address.parse()?,
+                                idl: None,
+                            },
+                            serde_json::Value::Object(_) => {
+                                serde_json::from_value(program_id.clone())
+                                    .map_err(|_| anyhow!("Unable to read toml"))?
+                            }
+                            _ => return Err(anyhow!("Invalid toml type")),
+                        })?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<String, ProgramDeployment>>>()?;
+            Ok((cluster, programs))
+        })
+        .collect::<Result<BTreeMap<Cluster, BTreeMap<String, ProgramDeployment>>>>()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +230,7 @@ pub fn read_all_programs() -> Result<Vec<Program>> {
     let mut r = vec![];
     for f in files {
         let path = f?.path();
-        let idl = anchor_syn::parser::file::parse(path.join("src/lib.rs"))?;
+        let idl = anchor_syn::idl::file::parse(path.join("src/lib.rs"))?;
         let lib_name = extract_lib_name(&path.join("Cargo.toml"))?;
         r.push(Program {
             lib_name,
@@ -175,6 +285,43 @@ impl Program {
             .expect("Must have current dir")
             .join(format!("target/deploy/{}.so", self.lib_name))
     }
+}
+
+#[derive(Debug, Default)]
+pub struct ProgramDeployment {
+    pub address: Pubkey,
+    pub idl: Option<String>,
+}
+
+impl TryFrom<_ProgramDeployment> for ProgramDeployment {
+    type Error = anyhow::Error;
+    fn try_from(pd: _ProgramDeployment) -> Result<Self, Self::Error> {
+        Ok(ProgramDeployment {
+            address: pd.address.parse()?,
+            idl: pd.idl,
+        })
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct _ProgramDeployment {
+    pub address: String,
+    pub idl: Option<String>,
+}
+
+impl From<&ProgramDeployment> for _ProgramDeployment {
+    fn from(pd: &ProgramDeployment) -> Self {
+        Self {
+            address: pd.address.to_string(),
+            idl: pd.idl.clone(),
+        }
+    }
+}
+
+pub struct ProgramWorkspace {
+    pub name: String,
+    pub program_id: Pubkey,
+    pub idl: Idl,
 }
 
 serum_common::home_path!(WalletPath, ".config/solana/id.json");
