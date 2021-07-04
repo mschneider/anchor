@@ -4,7 +4,7 @@ const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers')
 const { TokenInstructions } = require("@project-serum/serum");
 
-const provider = anchor.Provider.local();
+const provider = anchor.Provider.local(process.env.CLUSTER_RPC_URL);
 // Configure the client to use the local cluster.
 anchor.setProvider(provider);
 
@@ -57,6 +57,8 @@ async function createMintInstructions(provider, authority, mint) {
 async function createTokenAccount(provider, mint, owner) {
   const vault = new anchor.web3.Account();
   const tx = new anchor.web3.Transaction();
+  console.log('createTokenAccount', vault.publicKey.toString(), mint.toString(), owner.toString());
+
   tx.add(
     ...(await createTokenAccountInstrs(provider, vault.publicKey, mint, owner))
   );
@@ -111,6 +113,8 @@ async function initPool(
   poolAccount = new anchor.web3.Account();
   distributionAuthority = provider.wallet.publicKey;
 
+
+  console.log('initializePool', watermelonIdoAmount.toString(), nonce, startIdoTs.toString(), endDepositsTs.toString(), endIdoTs.toString())
   // Atomically create the new account and initialize it with the program.
   await program.rpc.initializePool(
     watermelonIdoAmount,
