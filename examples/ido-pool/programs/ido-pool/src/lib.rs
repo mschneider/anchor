@@ -311,7 +311,7 @@ pub struct WithdrawPoolUsdc<'info> {
     pub pool_usdc: CpiAccount<'info, TokenAccount>,
     #[account(signer)]
     pub distribution_authority: AccountInfo<'info>,
-    #[account(mut, constraint = creator_usdc.owner == *distribution_authority.key)]
+    #[account(mut)]
     pub creator_usdc: CpiAccount<'info, TokenAccount>,
     #[account(constraint = token_program.key == &token::ID)]
     pub token_program: AccountInfo<'info>,
