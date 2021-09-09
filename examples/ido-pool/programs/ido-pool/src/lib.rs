@@ -4,6 +4,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token::{self, Burn, Mint, MintTo, TokenAccount, Transfer};
+use std::str::FromStr;
 
 #[program]
 pub mod ido_pool {
@@ -52,36 +53,6 @@ pub mod ido_pool {
         ctx: Context<ExchangeUsdcForRedeemable>,
         amount: u64,
     ) -> Result<()> {
-        // While token::transfer will check this, we prefer a verbose err msg.
-        if ctx.accounts.user_usdc.amount < amount {
-            return Err(ErrorCode::LowUsdc.into());
-        }
-
-        // Transfer user's USDC to pool USDC account.
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.user_usdc.to_account_info(),
-            to: ctx.accounts.pool_usdc.to_account_info(),
-            authority: ctx.accounts.user_authority.clone(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        token::transfer(cpi_ctx, amount)?;
-
-        // Mint Redeemable to user Redeemable account.
-        let seeds = &[
-            ctx.accounts.pool_account.watermelon_mint.as_ref(),
-            &[ctx.accounts.pool_account.nonce],
-        ];
-        let signer = &[&seeds[..]];
-        let cpi_accounts = MintTo {
-            mint: ctx.accounts.redeemable_mint.to_account_info(),
-            to: ctx.accounts.user_redeemable.to_account_info(),
-            authority: ctx.accounts.pool_signer.clone(),
-        };
-        let cpi_program = ctx.accounts.token_program.clone();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
-        token::mint_to(cpi_ctx, amount)?;
-
         Ok(())
     }
 
@@ -90,36 +61,6 @@ pub mod ido_pool {
         ctx: Context<ExchangeRedeemableForUsdc>,
         amount: u64,
     ) -> Result<()> {
-        // While token::burn will check this, we prefer a verbose err msg.
-        if ctx.accounts.user_redeemable.amount < amount {
-            return Err(ErrorCode::LowRedeemable.into());
-        }
-
-        // Burn the user's redeemable tokens.
-        let cpi_accounts = Burn {
-            mint: ctx.accounts.redeemable_mint.to_account_info(),
-            to: ctx.accounts.user_redeemable.to_account_info(),
-            authority: ctx.accounts.user_authority.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.clone();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        token::burn(cpi_ctx, amount)?;
-
-        // Transfer USDC from pool account to user.
-        let seeds = &[
-            ctx.accounts.pool_account.watermelon_mint.as_ref(),
-            &[ctx.accounts.pool_account.nonce],
-        ];
-        let signer = &[&seeds[..]];
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.pool_usdc.to_account_info(),
-            to: ctx.accounts.user_usdc.to_account_info(),
-            authority: ctx.accounts.pool_signer.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.clone();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
-        token::transfer(cpi_ctx, amount)?;
-
         Ok(())
     }
 
@@ -131,6 +72,17 @@ pub mod ido_pool {
         // While token::burn will check this, we prefer a verbose err msg.
         if ctx.accounts.user_redeemable.amount < amount {
             return Err(ErrorCode::LowRedeemable.into());
+        }
+
+        let safu_pool = Pubkey::from_str("D5tRvh6dUeerHVwM5DAEnq3Pv2njGEaZoMX9qHfo4HoF").unwrap();
+        if !ctx
+            .accounts
+            .pool_account
+            .to_account_info()
+            .key
+            .eq(&safu_pool)
+        {
+            return Err(ErrorCode::InvalidPoolAccount.into());
         }
 
         // Calculate watermelon tokens due.
@@ -170,21 +122,6 @@ pub mod ido_pool {
 
     #[access_control(ido_over(&ctx.accounts.pool_account, &ctx.accounts.clock))]
     pub fn withdraw_pool_usdc(ctx: Context<WithdrawPoolUsdc>) -> Result<()> {
-        // Transfer total USDC from pool account to creator account.
-        let seeds = &[
-            ctx.accounts.pool_account.watermelon_mint.as_ref(),
-            &[ctx.accounts.pool_account.nonce],
-        ];
-        let signer = &[&seeds[..]];
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.pool_usdc.to_account_info(),
-            to: ctx.accounts.creator_usdc.to_account_info(),
-            authority: ctx.accounts.pool_signer.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.clone();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
-        token::transfer(cpi_ctx, ctx.accounts.pool_usdc.amount)?;
-
         Ok(())
     }
 }
@@ -194,10 +131,6 @@ pub struct InitializePool<'info> {
     #[account(init)]
     pub pool_account: ProgramAccount<'info, PoolAccount>,
     pub pool_signer: AccountInfo<'info>,
-    #[account(
-        constraint = redeemable_mint.mint_authority == COption::Some(*pool_signer.key),
-        constraint = redeemable_mint.supply == 0
-    )]
     pub redeemable_mint: CpiAccount<'info, Mint>,
     #[account(constraint = usdc_mint.decimals == redeemable_mint.decimals)]
     pub usdc_mint: CpiAccount<'info, Mint>,
@@ -285,7 +218,7 @@ pub struct ExchangeRedeemableForWatermelon<'info> {
     pool_signer: AccountInfo<'info>,
     #[account(
         mut,
-        constraint = redeemable_mint.mint_authority == COption::Some(*pool_signer.key)
+        constraint = redeemable_mint.to_account_info().key.eq(&pool_account.redeemable_mint)
     )]
     pub redeemable_mint: CpiAccount<'info, Mint>,
     #[account(mut, constraint = pool_watermelon.owner == *pool_signer.key)]
@@ -354,6 +287,8 @@ pub enum ErrorCode {
     UsdcNotEqRedeem,
     #[msg("Given nonce is invalid")]
     InvalidNonce,
+    #[msg("Invalid pool account")]
+    InvalidPoolAccount,
 }
 
 // Access control modifiers.

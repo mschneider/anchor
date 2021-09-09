@@ -332,3 +332,4 @@ describe("ido-pool", () => {
     assert.ok(creatorUsdcAccount.amount.eq(totalPoolUsdc));
   });
 });
+
