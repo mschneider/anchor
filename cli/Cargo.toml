@@ -29,17 +29,17 @@ toml = "0.5.8"
 solang-parser = "=0.2.3"
 semver = "1.0.4"
 serde = { version = "1.0.122", features = ["derive"] }
-solana-sdk = "1.14.16"
-solana-program = "1.14.16"
-solana-client = "1.14.16"
-solana-cli-config = "1.14.16"
-solana-faucet = "1.14.16"
+solana-sdk = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-program = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-client = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-cli-config = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-faucet = { git = "https://github.com/solana-labs/solana.git",branch="master" }
 dirs = "4.0"
 heck = "0.4.0"
 flate2 = "1.0.19"
 tar = "0.4.35"
 reqwest = { version = "0.11.4", default-features = false, features = ["multipart", "blocking", "rustls-tls"] }
-tokio = "1.24"
+tokio = "1.14"
 pathdiff = "0.2.0"
 cargo_toml = "0.13.0"
 walkdir = "2.3.2"

@@ -15,8 +15,8 @@ anchor-lang = { path = "../lang", version = "0.27.0" }
 anyhow = "1.0.32"
 regex = "1.4.5"
 serde = { version = "1.0.122", features = ["derive"] }
-solana-client = "1.14.7"
-solana-sdk = "1.14.16"
-solana-account-decoder = "1.14.16"
+solana-client = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-sdk = { git = "https://github.com/solana-labs/solana.git",branch="master" }
+solana-account-decoder = { git = "https://github.com/solana-labs/solana.git",branch="master" }
 thiserror = "1.0.20"
 url = "2.2.2"
